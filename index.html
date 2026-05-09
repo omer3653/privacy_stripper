@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Privacy Stripper — What Are You Really Sharing?</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@400;600;700;900&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060810;
+  --surface:rgba(0,0,0,0.35);
+  --surface2:rgba(0,0,0,0.4);
+  --border:rgba(255,40,40,0.15);
+  --border2:rgba(255,40,40,0.3);
+  --text:#e8eaf0;
+  --muted:#7a8090;
+  --red:#ff2d2d;
+  --red-dim:rgba(255,45,45,0.12);
+  --orange:#ff8c00;
+  --orange-dim:rgba(255,140,0,0.1);
+  --green:#00ff88;
+  --green-dim:rgba(0,255,136,0.08);
+  --mono:'Share Tech Mono',monospace;
+  --head:'Barlow Condensed',sans-serif;
+  --sans:'DM Sans',sans-serif;
+}
+html{scroll-behavior:smooth}
+
+body{
+  font-family:var(--sans);
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  position:relative;
+  overflow-x:hidden;
+}
+
+.bg-image{
+  position:fixed;inset:0;z-index:0;
+  background:url('bg.jpg') center/cover no-repeat;
+  filter:brightness(0.65) saturate(0.8) contrast(1.1);
+}
+.bg-overlay{
+  position:fixed;inset:0;z-index:1;
+  background:radial-gradient(ellipse at center,rgba(6,8,16,0.05) 0%,rgba(6,8,16,0.25) 60%,rgba(6,8,16,0.45) 100%);
+}
+.scanline{
+  position:fixed;inset:0;z-index:2;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,0.015) 3px,rgba(0,0,0,0.015) 4px);
+  animation:scanmove 8s linear infinite;
+}
+@keyframes scanmove{from{background-position:0 0}to{background-position:0 100px}}
+
+.container{max-width:820px;margin:0 auto;padding:2.5rem 1.25rem;position:relative;z-index:10}
+
+/* HEADER */
+.header{text-align:center;margin-bottom:3rem}
+.threat-badge{
+  display:inline-flex;align-items:center;gap:8px;
+  background:var(--red-dim);border:1px solid var(--red);
+  color:var(--red);font-size:11px;font-weight:600;font-family:var(--mono);
+  padding:5px 14px;border-radius:2px;margin-bottom:1.5rem;
+  letter-spacing:0.12em;animation:pulse-border 2s ease-in-out infinite;
+}
+@keyframes pulse-border{0%,100%{border-color:rgba(255,45,45,0.3)}50%{border-color:var(--red)}}
+.blink{animation:blink 1s step-end infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+.header h1{
+  font-family:var(--head);font-size:clamp(48px,8vw,80px);font-weight:900;
+  letter-spacing:-0.01em;line-height:1;margin-bottom:0.5rem;
+  color:#fff;text-transform:uppercase;
+}
+.header h1 span{color:var(--red);text-shadow:0 0 30px rgba(255,45,45,0.5)}
+.header .sub{
+  font-family:var(--mono);font-size:13px;color:var(--muted);
+  line-height:1.7;max-width:560px;margin:0.75rem auto 0;
+  border-top:1px solid var(--border);padding-top:0.75rem;
+}
+
+/* SUPPORTED FORMATS STRIP */
+.formats-strip{
+  display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:2rem;
+}
+.fmt{
+  font-family:var(--mono);font-size:10px;letter-spacing:0.08em;
+  padding:3px 10px;border:1px solid rgba(255,255,255,0.1);
+  border-radius:2px;color:var(--muted);background:rgba(255,255,255,0.03);
+}
+.fmt.active{border-color:var(--red);color:var(--red);background:var(--red-dim)}.fmt.steg{border-color:var(--orange);color:var(--orange);background:var(--orange-dim)}
+
+/* DROP ZONE */
+.drop-zone{
+  border:1px solid var(--border2);border-radius:4px;
+  padding:3.5rem 2rem;text-align:center;cursor:pointer;
+  position:relative;transition:all 0.2s ease;
+  background:rgba(0,0,0,0.25);
+  backdrop-filter:blur(20px);
+}
+.drop-zone::before{
+  content:'';position:absolute;inset:-1px;border-radius:4px;
+  background:linear-gradient(135deg,rgba(255,45,45,0.1),transparent 50%,rgba(255,45,45,0.05));
+  pointer-events:none;
+}
+.drop-zone:hover,.drop-zone.dragover{
+  border-color:var(--red);background:rgba(255,45,45,0.05);
+}
+.drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.drop-icon{
+  width:72px;height:72px;margin:0 auto 1.5rem;
+  border:1px solid var(--border2);border-radius:4px;
+  display:flex;align-items:center;justify-content:center;font-size:32px;
+  background:var(--red-dim);
+}
+.drop-zone h2{font-family:var(--head);font-size:22px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px}
+.drop-zone p{font-family:var(--mono);font-size:12px;color:var(--muted)}
+
+/* SPINNER */
+.spinner-wrap{display:none;text-align:center;padding:3rem;color:var(--muted);font-family:var(--mono);font-size:13px}
+.spinner-wrap.show{display:block}
+.spinner{width:36px;height:36px;margin:0 auto 1rem;border:2px solid var(--border2);border-top-color:var(--red);border-radius:50%;animation:spin 0.7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* RESULT CARD */
+.result-card{
+  display:none;border:1px solid var(--border2);border-radius:4px;
+  overflow:hidden;margin-top:1.5rem;
+  background:var(--surface2);backdrop-filter:blur(24px);
+  animation:fadeUp 0.4s ease both;
+}
+.result-card.show{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+
+/* CARD HEADER */
+.card-header{
+  padding:1.25rem 1.5rem;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  background:rgba(255,45,45,0.04);
+}
+.file-info{display:flex;align-items:center;gap:12px}
+.ficon{
+  width:44px;height:44px;border-radius:3px;
+  display:flex;align-items:center;justify-content:center;font-size:22px;
+  border:1px solid var(--border2);background:var(--red-dim);
+}
+.fname{font-family:var(--mono);font-size:13px;color:#fff}
+.fmeta{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:3px}
+
+/* RISK METER */
+.risk-section{padding:1.25rem 1.5rem;border-bottom:1px solid var(--border)}
+.risk-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.risk-lbl{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:0.06em;text-transform:uppercase}
+.risk-pill{font-family:var(--mono);font-size:11px;font-weight:600;padding:3px 10px;border-radius:2px;letter-spacing:0.05em}
+.risk-pill.high{background:var(--red-dim);color:var(--red);border:1px solid var(--red)}
+.risk-pill.med{background:var(--orange-dim);color:var(--orange);border:1px solid var(--orange)}
+.risk-pill.low{background:var(--green-dim);color:var(--green);border:1px solid var(--green)}
+.risk-track{height:4px;background:rgba(255,255,255,0.06);border-radius:0;overflow:hidden}
+.risk-fill{height:100%;transition:width 1s cubic-bezier(0.34,1.56,0.64,1);width:0%}
+.risk-fill.high{background:var(--red)}
+.risk-fill.med{background:var(--orange)}
+.risk-fill.low{background:var(--green)}
+.risk-count{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:6px}
+
+/* SECTIONS */
+.sections{padding:1.25rem 1.5rem}
+.sec-header{
+  display:flex;align-items:center;gap:8px;cursor:pointer;
+  margin-bottom:10px;user-select:none;
+}
+.sec-title{
+  font-family:var(--mono);font-size:10px;font-weight:600;
+  letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);
+}
+.sec-badge{
+  font-family:var(--mono);font-size:10px;padding:1px 7px;border-radius:2px;
+  margin-left:auto;
+}
+.sec-badge.danger{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,45,45,0.3)}
+.sec-badge.warning{background:var(--orange-dim);color:var(--orange);border:1px solid rgba(255,140,0,0.3)}
+.sec-badge.safe{background:rgba(255,255,255,0.04);color:var(--muted);border:1px solid rgba(255,255,255,0.1)}
+.sec-badge.steg{background:rgba(255,140,0,0.15);color:var(--orange);border:1px solid var(--orange);animation:pulse-border 2s infinite}
+
+.meta-group{display:flex;flex-direction:column;gap:5px;margin-bottom:1.5rem;padding-bottom:1.5rem;border-bottom:1px solid var(--border)}
+.meta-group:last-child{margin-bottom:0;padding-bottom:0;border-bottom:none}
+
+.meta-row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:8px 10px;border-radius:2px;border:1px solid transparent;
+  transition:all 0.25s ease;
+}
+.meta-row.danger{background:var(--red-dim);border-color:rgba(255,45,45,0.2)}
+.meta-row.warning{background:var(--orange-dim);border-color:rgba(255,140,0,0.2)}
+.meta-row.safe{background:rgba(255,255,255,0.02);border-color:rgba(255,255,255,0.05)}
+.meta-row.steg{background:rgba(255,140,0,0.08);border-color:rgba(255,140,0,0.3);animation:pulse-border 3s infinite}
+.meta-row.cleaned{background:var(--green-dim);border-color:rgba(0,255,136,0.2)}
+
+.meta-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
+.meta-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.meta-row.danger .meta-dot{background:var(--red)}
+.meta-row.warning .meta-dot{background:var(--orange)}
+.meta-row.safe .meta-dot{background:rgba(255,255,255,0.2)}
+.meta-row.steg .meta-dot{background:var(--orange);animation:blink 1s infinite}
+.meta-row.cleaned .meta-dot{background:var(--green)}
+
+.meta-key{font-family:var(--mono);font-size:11px;color:var(--muted);flex-shrink:0;min-width:160px}
+.meta-val{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta-row.danger .meta-val{color:var(--red)}
+.meta-row.warning .meta-val{color:var(--orange)}
+.meta-row.steg .meta-val{color:var(--orange)}
+.meta-row.cleaned .meta-val{color:var(--green)}
+
+.tag{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:2px;font-weight:600;letter-spacing:0.05em;flex-shrink:0}
+.tag.danger{background:var(--red-dim);color:var(--red);border:1px solid rgba(255,45,45,0.3)}
+.tag.warning{background:var(--orange-dim);color:var(--orange);border:1px solid rgba(255,140,0,0.3)}
+.tag.safe{background:rgba(255,255,255,0.04);color:var(--muted);border:1px solid rgba(255,255,255,0.08)}
+.tag.steg{background:var(--orange-dim);color:var(--orange);border:1px solid var(--orange)}
+.tag.cleaned{background:var(--green-dim);color:var(--green);border:1px solid rgba(0,255,136,0.3)}
+
+/* MAP LINK */
+.map-link{font-family:var(--mono);font-size:11px;color:var(--red);text-decoration:none;border-bottom:1px dashed rgba(255,45,45,0.4)}
+.map-link:hover{color:#ff6060}
+
+/* STEG WARNING BOX */
+.steg-warning{
+  margin:1rem 0;padding:12px 14px;
+  background:rgba(255,140,0,0.08);border:1px solid var(--orange);border-radius:2px;
+  font-family:var(--mono);font-size:12px;color:var(--orange);
+  display:none;
+}
+.steg-warning.show{display:block}
+.steg-warning strong{color:#ffb347;display:block;margin-bottom:4px;font-size:13px}
+
+/* ACTIONS */
+.card-actions{
+  padding:1.25rem 1.5rem;border-top:1px solid var(--border);
+  display:flex;gap:10px;flex-wrap:wrap;
+  background:rgba(255,45,45,0.03);
+}
+.btn-primary{
+  flex:1;min-width:180px;padding:12px 20px;
+  background:var(--red);color:#fff;
+  border:none;border-radius:2px;
+  font-family:var(--head);font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;
+  cursor:pointer;transition:all 0.15s;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.btn-primary:hover{background:#ff5555;transform:translateY(-1px)}
+.btn-primary:disabled{opacity:0.4;cursor:not-allowed;transform:none}
+.btn-secondary{
+  padding:12px 18px;background:transparent;color:var(--muted);
+  border:1px solid var(--border2);border-radius:2px;
+  font-family:var(--mono);font-size:12px;cursor:pointer;transition:all 0.15s;
+}
+.btn-secondary:hover{color:var(--text);background:rgba(255,255,255,0.04)}
+
+/* SUCCESS */
+.success-banner{
+  display:none;margin:0 1.5rem 1.5rem;padding:12px 14px;
+  background:var(--green-dim);border:1px solid rgba(0,255,136,0.3);
+  border-radius:2px;font-family:var(--mono);font-size:12px;color:var(--green);
+  align-items:center;gap:8px;
+}
+.success-banner.show{display:flex}
+
+.no-meta{padding:2rem;text-align:center;color:var(--green);font-family:var(--mono);font-size:13px}
+
+/* FOOTER */
+.footer-note{
+  text-align:center;margin-top:2rem;
+  font-family:var(--mono);font-size:11px;color:var(--muted);line-height:1.8;
+  border-top:1px solid var(--border);padding-top:1.5rem;
+}
+.footer-note .ok{color:var(--green)}
+</style>
+</head>
+<body>
+<div class="bg-image"></div>
+<div class="bg-overlay"></div>
+<div class="scanline"></div>
+
+<div class="container">
+  <div class="header">
+    <div class="threat-badge">
+      <span class="blink">■</span> THREAT DETECTION ACTIVE — METADATA SCANNER v2.4
+    </div>
+    <h1>PRIVACY<br><span>STRIPPER</span></h1>
+    <p class="sub">
+      Every file you share contains hidden data you never consented to reveal.<br/>
+      GPS coordinates. Device fingerprints. Creation history. Steganographic payloads.<br/>
+      This tool exposes and destroys all of it — locally, in your browser.
+    </p>
+  </div>
+
+  <div class="formats-strip">
+    <span class="fmt active">JPG / JPEG</span>
+    <span class="fmt active">PNG</span>
+    <span class="fmt active">WEBP</span>
+    <span class="fmt active">PDF</span>
+    <span class="fmt active">DOCX</span>
+    <span class="fmt active">MP4 / MOV</span>
+    <span class="fmt active">HEIC</span>
+    <span class="fmt active">MP3</span>
+    <span class="fmt steg">⚠ STEG SCAN</span>
+  </div>
+
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,video/mp4,video/quicktime,audio/mpeg,audio/mp3" />
+    <div class="drop-icon">🔍</div>
+    <h2>Drop file to scan</h2>
+    <p>// file never leaves your device — 100% local processing</p>
+  </div>
+
+  <div class="spinner-wrap" id="spinner">
+    <div class="spinner"></div>
+    SCANNING FILE FOR HIDDEN DATA...
+  </div>
+
+  <div class="result-card" id="resultCard">
+    <div class="card-header">
+      <div class="file-info">
+        <div class="ficon" id="fileIcon">📄</div>
+        <div>
+          <div class="fname" id="fileName">—</div>
+          <div class="fmeta" id="fileMeta">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="risk-section">
+      <div class="risk-row">
+        <span class="risk-lbl">// THREAT LEVEL</span>
+        <span class="risk-pill" id="riskPill">—</span>
+      </div>
+      <div class="risk-track"><div class="risk-fill" id="riskFill"></div></div>
+      <div class="risk-count" id="riskCount"></div>
+    </div>
+
+    <div class="sections" id="sectionsWrap"></div>
+
+    <div class="success-banner" id="successBanner">
+      ✓ <span id="successText">Metadata purged. File is clean.</span>
+    </div>
+
+    <div class="card-actions">
+      <button class="btn-primary" id="cleanBtn" onclick="cleanFile()">
+        ⚡ PURGE &amp; DOWNLOAD CLEAN FILE
+      </button>
+      <button class="btn-secondary" onclick="resetApp()">SCAN NEW FILE</button>
+    </div>
+  </div>
+
+  <div class="footer-note">
+    <span class="ok">// ZERO DATA RETENTION</span> — No server. No upload. No logs.<br/>
+    Your files are processed in-memory and immediately discarded.
+  </div>
+</div>
+
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const resultCard = document.getElementById('resultCard');
+const spinner = document.getElementById('spinner');
+
+let currentFile = null;
+let currentType = null;
+let foundMeta = [];
+
+function formatSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return Math.round(b/1024) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0]; if (f) handleFile(f);
+});
+fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+function handleFile(file) {
+  currentFile = file;
+  resultCard.classList.remove('show');
+  document.getElementById('successBanner').classList.remove('show');
+  spinner.classList.add('show');
+  const type = file.type;
+  if (type === 'image/jpeg' || type === 'image/jpg') { currentType = 'jpeg'; readJpegExif(file); }
+  else if (type === 'image/png') { currentType = 'png'; readPngMeta(file); }
+  else if (type === 'image/webp') { currentType = 'webp'; readWebpMeta(file); }
+  else if (type === 'application/pdf') { currentType = 'pdf'; readPdfMeta(file); }
+  else { spinner.classList.remove('show'); alert('Unsupported format. Please upload a JPG, PNG, WEBP, or PDF.'); }
+}
+
+/* ── JPEG EXIF ── */
+function readJpegExif(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const buf = e.target.result;
+    const view = new DataView(buf);
+    const meta = parseExif(view, buf);
+    const steg = detectStegJpeg(buf);
+    spinner.classList.remove('show');
+    showResult(file, 'jpeg', meta, steg);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseExif(view, buf) {
+  const results = [];
+  if (view.getUint16(0) !== 0xFFD8) return results;
+  let offset = 2;
+  while (offset < view.byteLength - 2) {
+    const marker = view.getUint16(offset);
+    if (marker === 0xFFE1) {
+      const len = view.getUint16(offset + 2);
+      const exifHeader = String.fromCharCode(...new Uint8Array(buf, offset + 4, 6));
+      if (exifHeader.startsWith('Exif')) {
+        const tiffOffset = offset + 10;
+        const tiffView = new DataView(buf, tiffOffset);
+        const littleEndian = tiffView.getUint16(0) === 0x4949;
+        const ifdOffset = tiffView.getUint32(4, littleEndian);
+        const tags = readIFD(tiffView, ifdOffset, littleEndian, buf, tiffOffset);
+        results.push(...tags);
+      }
+      offset += 2 + len;
+    } else if ((marker & 0xFF00) === 0xFF00) {
+      const len = view.getUint16(offset + 2);
+      offset += 2 + len;
+    } else { break; }
+  }
+  return results;
+}
+
+const EXIF_TAGS = {
+  0x013B: { name: 'Photographer / Author', risk: 'danger' },
+  0x8298: { name: 'Copyright', risk: 'danger' },
+  0xA420: { name: 'Unique Image ID', risk: 'danger' },
+  0xA430: { name: 'Camera Owner Name', risk: 'danger' },
+  0xA435: { name: 'Lens Serial Number', risk: 'danger' },
+  0xC62F: { name: 'Camera Serial Number', risk: 'danger' },
+  0x9C9B: { name: 'Author (XP)', risk: 'danger' },
+  0x010F: { name: 'Device Manufacturer', risk: 'warning' },
+  0x0110: { name: 'Device Model', risk: 'warning' },
+  0x0131: { name: 'Software / Firmware', risk: 'warning' },
+  0xA433: { name: 'Lens Manufacturer', risk: 'warning' },
+  0xA434: { name: 'Lens Model', risk: 'warning' },
+  0x9C9D: { name: 'Keywords (XP)', risk: 'warning' },
+  0x9C9F: { name: 'Comment (XP)', risk: 'warning' },
+  0x0132: { name: 'Date Modified', risk: 'warning' },
+  0x9003: { name: 'Date Taken (Original)', risk: 'warning' },
+  0x9004: { name: 'Date Created', risk: 'warning' },
+  0xA002: { name: 'Image Width', risk: 'safe' },
+  0xA003: { name: 'Image Height', risk: 'safe' },
+  0x0112: { name: 'Orientation', risk: 'safe' },
+  0x011A: { name: 'X Resolution', risk: 'safe' },
+  0x011B: { name: 'Y Resolution', risk: 'safe' },
+  0x0213: { name: 'YCbCr Positioning', risk: 'safe' },
+  0xA001: { name: 'Color Space', risk: 'safe' },
+  0x8827: { name: 'ISO Speed', risk: 'safe' },
+  0x829A: { name: 'Exposure Time', risk: 'safe' },
+  0x829D: { name: 'F-Number', risk: 'safe' },
+  0x8822: { name: 'Exposure Program', risk: 'safe' },
+  0x9201: { name: 'Shutter Speed', risk: 'safe' },
+  0x9202: { name: 'Aperture', risk: 'safe' },
+  0x9204: { name: 'Exposure Bias', risk: 'safe' },
+  0x9207: { name: 'Metering Mode', risk: 'safe' },
+  0x9209: { name: 'Flash', risk: 'safe' },
+  0x920A: { name: 'Focal Length', risk: 'safe' },
+  0xA403: { name: 'White Balance', risk: 'safe' },
+  0xA404: { name: 'Digital Zoom Ratio', risk: 'safe' },
+  0xA405: { name: 'Focal Length (35mm equiv)', risk: 'safe' },
+  0xA406: { name: 'Scene Capture Type', risk: 'safe' },
+  0xA408: { name: 'Contrast', risk: 'safe' },
+  0xA409: { name: 'Saturation', risk: 'safe' },
+  0xA40A: { name: 'Sharpness', risk: 'safe' },
+  0xA402: { name: 'Exposure Mode', risk: 'safe' },
+  0x8769: { name: 'Exif IFD', risk: null },
+  0x8825: { name: 'GPS IFD', risk: null },
+  0xA005: { name: 'Interop IFD', risk: null },
+};
+
+function readRational(view, ptr, le) {
+  const n = view.getUint32(ptr, le); const d = view.getUint32(ptr+4, le); return d ? n/d : 0;
+}
+
+function readIFD(view, offset, le, buf, tiffBase) {
+  const results = [];
+  try {
+    const count = view.getUint16(offset, le);
+    for (let i = 0; i < count; i++) {
+      const e = offset + 2 + i * 12;
+      const tag = view.getUint16(e, le);
+      const type = view.getUint16(e+2, le);
+      const numValues = view.getUint32(e+4, le);
+      const info = EXIF_TAGS[tag];
+      if (!info) continue;
+      if (info.risk === null) {
+        const subOffset = view.getUint32(e+8, le);
+        if (tag === 0x8825) { const g = readGPS(view, subOffset, le); results.push(...g); }
+        else { results.push(...readIFD(view, subOffset, le, buf, tiffBase)); }
+        continue;
+      }
+      const val = readTagValue(view, e, type, numValues, le);
+      if (val && val !== '0') results.push({ key: info.name, val: String(val).trim(), risk: info.risk });
+    }
+  } catch(e) {}
+  return results;
+}
+
+function readGPS(view, offset, le) {
+  const results = [];
+  try {
+    const count = view.getUint16(offset, le);
+    let latRef='',lat=null,lonRef='',lon=null,altRef=0,alt=null,speed=null,speedRef='K',imgDir=null,timestamp=null,datestamp=null,mapDatum=null;
+    for (let i = 0; i < count; i++) {
+      const e = offset + 2 + i * 12;
+      const tag = view.getUint16(e, le);
+      const num = view.getUint32(e+4, le);
+      const dataOff = num <= 4 ? e+8 : view.getUint32(e+8, le);
+      if (tag===0x0001) latRef = String.fromCharCode(view.getUint8(e+8));
+      if (tag===0x0003) lonRef = String.fromCharCode(view.getUint8(e+8));
+      if (tag===0x0005) altRef = view.getUint8(e+8);
+      if (tag===0x000C) speedRef = String.fromCharCode(view.getUint8(e+8));
+      if (tag===0x0002||tag===0x0004) {
+        const ptr = view.getUint32(e+8, le);
+        const dd = (readRational(view,ptr,le) + readRational(view,ptr+8,le)/60 + readRational(view,ptr+16,le)/3600).toFixed(6);
+        if (tag===0x0002) lat=dd; else lon=dd;
+      }
+      if (tag===0x0006) { const ptr=view.getUint32(e+8,le); alt=readRational(view,ptr,le).toFixed(1); if(altRef===1) alt='-'+alt; }
+      if (tag===0x000D) { const ptr=view.getUint32(e+8,le); speed=readRational(view,ptr,le).toFixed(1); }
+      if (tag===0x0011) { const ptr=view.getUint32(e+8,le); imgDir=readRational(view,ptr,le).toFixed(1); }
+      if (tag===0x001D) { const b=new Uint8Array(view.buffer,view.byteOffset+dataOff,num); datestamp=new TextDecoder().decode(b).replace(/\0/g,'').replace(/:/g,'-'); }
+      if (tag===0x0007) {
+        const ptr=view.getUint32(e+8,le);
+        const h=Math.round(readRational(view,ptr,le)),m=Math.round(readRational(view,ptr+8,le)),s=Math.round(readRational(view,ptr+16,le));
+        timestamp=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')} UTC`;
+      }
+      if (tag===0x0012) { const b=new Uint8Array(view.buffer,view.byteOffset+dataOff,Math.min(num,20)); mapDatum=new TextDecoder().decode(b).replace(/\0/g,'').trim(); }
+    }
+    if (lat&&lon) {
+      const latN = parseFloat(lat), lonN = parseFloat(lon.replace ? lon : lon);
+      results.push({ key: '📍 GPS Coordinates', val: `${lat}°${latRef}, ${lon}°${lonRef}`, risk: 'danger' });
+      results.push({ key: '🗺 Google Maps Link', val: `maps.google.com/?q=${latN},${lonN}`, risk: 'danger', isLink: true, href: `https://maps.google.com/?q=${latN},${lonN}` });
+    }
+    if (alt!==null) results.push({ key: 'GPS Altitude', val: `${alt} m above sea level`, risk: 'warning' });
+    if (speed!==null) { const u=speedRef==='K'?'km/h':speedRef==='M'?'mph':'knots'; results.push({ key: 'GPS Speed', val: `${speed} ${u}`, risk: 'warning' }); }
+    if (imgDir!==null) results.push({ key: 'Camera Direction', val: `${imgDir}° (true north)`, risk: 'warning' });
+    if (timestamp) results.push({ key: 'GPS Time (UTC)', val: timestamp, risk: 'warning' });
+    if (datestamp) results.push({ key: 'GPS Date', val: datestamp, risk: 'warning' });
+    if (mapDatum) results.push({ key: 'GPS Map Datum', val: mapDatum, risk: 'safe' });
+  } catch(e) {}
+  return results;
+}
+
+function readTagValue(view, entryOffset, type, num, le) {
+  try {
+    const SIZE=[0,1,1,2,4,8,1,1,2,4,8,4,8];
+    const totalSize=num*(SIZE[type]||1);
+    let dataOffset=entryOffset+8;
+    if (totalSize>4) dataOffset=view.getUint32(entryOffset+8, le);
+    if (type===2) { const bytes=new Uint8Array(view.buffer,view.byteOffset+dataOffset,num); return new TextDecoder().decode(bytes).replace(/\0/g,'').trim(); }
+    if (type===3) return view.getUint16(dataOffset, le);
+    if (type===4) return view.getUint32(dataOffset, le);
+    if (type===5) { const n=view.getUint32(dataOffset,le),d=view.getUint32(dataOffset+4,le); return d?(n/d).toFixed(2):n; }
+  } catch(e) {}
+  return null;
+}
+
+/* ── PNG ── */
+function readPngMeta(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const buf = new Uint8Array(e.target.result);
+    const meta = [];
+    let i = 8;
+    while (i < buf.length - 12) {
+      const len = (buf[i]<<24|buf[i+1]<<16|buf[i+2]<<8|buf[i+3])>>>0;
+      const type = String.fromCharCode(buf[i+4],buf[i+5],buf[i+6],buf[i+7]);
+      if (type==='tEXt'||type==='iTXt') {
+        const data = buf.slice(i+8, i+8+len);
+        const nullIdx = data.indexOf(0);
+        if (nullIdx>0) {
+          const key = new TextDecoder().decode(data.slice(0,nullIdx));
+          const val = new TextDecoder().decode(data.slice(nullIdx+1)).replace(/\0/g,' ').trim();
+          if (val) {
+            const risk = ['Author','Creator','Copyright','Software','Comment','Description','Source'].some(k=>key.toLowerCase().includes(k.toLowerCase())) ? 'warning' : 'safe';
+            meta.push({ key, val: val.slice(0,100), risk });
+          }
+        }
+      }
+      if (type==='tIME') {
+        try {
+          const d=buf.slice(i+8,i+8+7);
+          const yr=(d[0]<<8|d[1]),mo=d[2],dy=d[3],hr=d[4],mn=d[5],sc=d[6];
+          meta.push({ key:'Last Modified (tIME)', val:`${yr}-${String(mo).padStart(2,'0')}-${String(dy).padStart(2,'0')} ${String(hr).padStart(2,'0')}:${String(mn).padStart(2,'0')}:${String(sc).padStart(2,'0')}`, risk:'warning' });
+        } catch(e) {}
+      }
+      if (type==='IEND') break;
+      i += 12+len;
+    }
+    const steg = detectStegPng(buf);
+    spinner.classList.remove('show');
+    showResult(file, 'png', meta, steg);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/* ── WEBP ── */
+function readWebpMeta(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const buf = new Uint8Array(e.target.result);
+    const meta = [];
+    const str = new TextDecoder('ascii',{fatal:false}).decode(buf.slice(0,300));
+    if (str.includes('EXIF')) meta.push({ key:'EXIF Block Detected', val:'Contains embedded EXIF metadata', risk:'warning' });
+    if (str.includes('XMP ')) meta.push({ key:'XMP Block Detected', val:'Contains embedded XMP metadata', risk:'warning' });
+    if (str.includes('ICCP')) meta.push({ key:'ICC Color Profile', val:'Custom color profile embedded', risk:'safe' });
+    const steg = detectStegGeneric(buf);
+    spinner.classList.remove('show');
+    showResult(file, 'webp', meta, steg);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/* ── PDF ── */
+async function readPdfMeta(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    const pdf = await PDFLib.PDFDocument.load(buf, { ignoreEncryption: true });
+    const meta = [];
+    const add = (key, val, risk) => { if(val) meta.push({key,val,risk}); };
+    add('Author', pdf.getAuthor(), 'danger');
+    add('Created By', pdf.getCreator(), 'warning');
+    add('Producer', pdf.getProducer(), 'warning');
+    add('Title', pdf.getTitle(), 'warning');
+    add('Subject', pdf.getSubject(), 'warning');
+    add('Keywords', pdf.getKeywords(), 'warning');
+    const cd = pdf.getCreationDate();
+    const md = pdf.getModificationDate();
+    if (cd) add('Creation Date', cd.toLocaleString('en-IL'), 'warning');
+    if (md) add('Modified Date', md.toLocaleString('en-IL'), 'safe');
+    meta.push({ key:'Page Count', val: pdf.getPageCount()+' pages', risk:'safe' });
+    const steg = { found: false };
+    spinner.classList.remove('show');
+    showResult(file, 'pdf', meta, steg);
+  } catch(err) {
+    spinner.classList.remove('show');
+    showResult(file, 'pdf', [{ key:'Read Error', val:'PDF is encrypted or corrupted', risk:'warning' }], {found:false});
+  }
+}
+
+/* ── DOCX (ZIP + XML) ── */
+function readDocxMeta(file) {
+  const reader = new FileReader();
+  reader.onload = async e => {
+    const meta = [];
+    try {
+      const zip = await loadZip(e.target.result);
+      if (!zip) throw new Error('Could not parse ZIP');
+
+      // Core properties: docProps/core.xml
+      const coreXml = zip['docProps/core.xml'];
+      if (coreXml) {
+        const x = coreXml;
+        const g = (tag) => x.match(new RegExp('<(?:cp:|dc:|dcterms:)?' + tag + '[^>]*>([^<]+)<'))?.[1]?.trim();
+        const creator    = g('creator');
+        const lastBy     = g('lastModifiedBy');
+        const created    = g('created');
+        const modified   = g('modified');
+        const revision   = g('revision');
+        const keywords   = g('keywords');
+        const subject    = g('subject');
+        const desc       = g('description');
+        if (creator)  meta.push({ key: 'Author (creator)', val: creator, risk: 'danger' });
+        if (lastBy)   meta.push({ key: 'Last Modified By', val: lastBy, risk: 'danger' });
+        if (revision) meta.push({ key: 'Revision Count', val: revision + ' saves', risk: 'warning' });
+        if (created)  meta.push({ key: 'Created Date', val: created.replace('T',' ').replace('Z',' UTC'), risk: 'warning' });
+        if (modified) meta.push({ key: 'Modified Date', val: modified.replace('T',' ').replace('Z',' UTC'), risk: 'warning' });
+        if (subject)  meta.push({ key: 'Subject', val: subject, risk: 'warning' });
+        if (keywords) meta.push({ key: 'Keywords', val: keywords, risk: 'warning' });
+        if (desc)     meta.push({ key: 'Description', val: desc.slice(0,100), risk: 'warning' });
+      }
+
+      // App properties: docProps/app.xml
+      const appXml = zip['docProps/app.xml'];
+      if (appXml) {
+        const g = (tag) => appXml.match(new RegExp('<' + tag + '>([^<]+)</' + tag + '>'))?.[1]?.trim();
+        const app      = g('Application');
+        const company  = g('Company');
+        const manager  = g('Manager');
+        const template = g('Template');
+        const pages    = g('Pages');
+        const words    = g('Words');
+        const chars    = g('Characters');
+        const appVer   = g('AppVersion');
+        if (company)  meta.push({ key: 'Company', val: company, risk: 'danger' });
+        if (manager)  meta.push({ key: 'Manager', val: manager, risk: 'danger' });
+        if (app)      meta.push({ key: 'Application', val: app + (appVer ? ' v'+appVer : ''), risk: 'warning' });
+        if (template && template !== 'Normal.dotm') meta.push({ key: 'Template Used', val: template, risk: 'warning' });
+        if (pages)    meta.push({ key: 'Pages', val: pages, risk: 'safe' });
+        if (words)    meta.push({ key: 'Word Count', val: words, risk: 'safe' });
+      }
+
+      // Check for tracked changes / comments
+      const docXml = zip['word/document.xml'] || '';
+      const hasComments = zip['word/comments.xml'] && zip['word/comments.xml'].length > 200;
+      const hasRevisions = docXml.includes('w:ins ') || docXml.includes('w:del ');
+      if (hasComments) meta.push({ key: 'Comments Embedded', val: 'Document contains reviewer comments', risk: 'danger' });
+      if (hasRevisions) meta.push({ key: 'Track Changes', val: 'Document has tracked edits/deletions', risk: 'danger' });
+
+    } catch(err) {
+      meta.push({ key: 'Parse Error', val: 'Could not read DOCX: ' + err.message, risk: 'warning' });
+    }
+    spinner.classList.remove('show');
+    showResult(file, 'docx', meta, {found:false});
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function loadZip(arrayBuffer) {
+  const buf = new Uint8Array(arrayBuffer);
+  const files = {};
+  let offset = 0;
+  while (offset < buf.length - 4) {
+    const sig = (buf[offset]<<24|buf[offset+1]<<16|buf[offset+2]<<8|buf[offset+3])>>>0;
+    if (sig !== 0x504B0304) { offset++; continue; }
+    const view = new DataView(buf.buffer, offset);
+    const flags    = view.getUint16(6, true);
+    const compMethod = view.getUint16(8, true);
+    const compSize = view.getUint32(18, true);
+    const uncompSize = view.getUint32(22, true);
+    const nameLen  = view.getUint16(26, true);
+    const extraLen = view.getUint16(28, true);
+    const nameBytes = buf.slice(offset+30, offset+30+nameLen);
+    const name = new TextDecoder().decode(nameBytes);
+    const dataStart = offset + 30 + nameLen + extraLen;
+    const data = buf.slice(dataStart, dataStart + compSize);
+    if (compMethod === 0) {
+      files[name] = new TextDecoder('utf-8',{fatal:false}).decode(data);
+    } else if (compMethod === 8) {
+      try {
+        const ds = new DecompressionStream('deflate-raw');
+        const writer = ds.writable.getWriter();
+        const reader = ds.readable.getReader();
+        writer.write(data); writer.close();
+        const chunks = [];
+        let done = false;
+        while (!done) { const r = await reader.read(); done=r.done; if(r.value) chunks.push(r.value); }
+        const out = new Uint8Array(chunks.reduce((a,c)=>a+c.length,0));
+        let pos = 0; chunks.forEach(c => { out.set(c,pos); pos+=c.length; });
+        files[name] = new TextDecoder('utf-8',{fatal:false}).decode(out);
+      } catch(e) { files[name] = ''; }
+    }
+    offset = dataStart + compSize;
+  }
+  return files;
+}
+
+/* ── MP4 / MOV (ISO Base Media atoms) ── */
+function readVideoMeta(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const buf = new Uint8Array(e.target.result);
+    const view = new DataView(buf.buffer);
+    const meta = [];
+    try {
+      parseAtoms(buf, view, 0, Math.min(buf.length, 2*1024*1024), meta);
+    } catch(err) {}
+    if (meta.length === 0) meta.push({ key: 'Video Metadata', val: 'No readable metadata found in atoms', risk: 'safe' });
+    spinner.classList.remove('show');
+    showResult(file, 'video', meta, {found:false});
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseAtoms(buf, view, start, end, meta, depth) {
+  depth = depth || 0;
+  if (depth > 8) return;
+  let offset = start;
+  const CONTAINERS = ['moov','udta','meta','ilst','trak','mdia','minf','stbl'];
+  while (offset < end - 8) {
+    let size = view.getUint32(offset, false);
+    const type = String.fromCharCode(buf[offset+4],buf[offset+5],buf[offset+6],buf[offset+7]);
+    if (size < 8) break;
+    if (size > end - offset) break;
+
+    if (type === '©nam') meta.push({ key: 'Title', val: readAtomString(buf, offset+16, size-16), risk: 'warning' });
+    else if (type === '©ART' || type === '©art') meta.push({ key: 'Artist', val: readAtomString(buf, offset+16, size-16), risk: 'danger' });
+    else if (type === '©alb') meta.push({ key: 'Album', val: readAtomString(buf, offset+16, size-16), risk: 'warning' });
+    else if (type === '©cmt') meta.push({ key: 'Comment', val: readAtomString(buf, offset+16, size-16), risk: 'warning' });
+    else if (type === '©day') meta.push({ key: 'Year / Date', val: readAtomString(buf, offset+16, size-16), risk: 'warning' });
+    else if (type === '©too' || type === 'swr ') meta.push({ key: 'Encoder / Software', val: readAtomString(buf, offset+16, size-16), risk: 'warning' });
+    else if (type === '©wrt') meta.push({ key: 'Composer / Writer', val: readAtomString(buf, offset+16, size-16), risk: 'danger' });
+    else if (type === 'cprt') meta.push({ key: 'Copyright', val: readAtomString(buf, offset+8, size-8), risk: 'danger' });
+    else if (type === 'loci') {
+      // Location atom
+      try {
+        const locBytes = buf.slice(offset+12, offset+size);
+        const nullIdx = locBytes.indexOf(0);
+        const locName = new TextDecoder().decode(locBytes.slice(0, nullIdx > 0 ? nullIdx : 20));
+        if (locName.trim()) meta.push({ key: '📍 Location Name', val: locName.trim(), risk: 'danger' });
+      } catch(e) {}
+    } else if (type === 'xyz ') {
+      try {
+        const xyz = readAtomString(buf, offset+12, size-12);
+        meta.push({ key: '📍 GPS Coordinates (xyz)', val: xyz, risk: 'danger' });
+      } catch(e) {}
+    } else if (type === 'mvhd') {
+      // Movie header — creation and modification time
+      try {
+        const version = buf[offset+8];
+        let cTime, mTime;
+        if (version === 0) {
+          cTime = view.getUint32(offset+12, false);
+          mTime = view.getUint32(offset+16, false);
+        } else {
+          cTime = Number(view.getBigUint64(offset+12, false));
+          mTime = Number(view.getBigUint64(offset+20, false));
+        }
+        // MP4 epoch starts 1904-01-01
+        const epoch1904 = new Date('1904-01-01T00:00:00Z').getTime()/1000;
+        const toDate = t => new Date((t + epoch1904)*1000).toLocaleString('en-US');
+        if (cTime > 0) meta.push({ key: 'Video Created', val: toDate(cTime), risk: 'warning' });
+        if (mTime > 0 && mTime !== cTime) meta.push({ key: 'Video Modified', val: toDate(mTime), risk: 'warning' });
+      } catch(e) {}
+    } else if (type === 'ftyp') {
+      const brand = String.fromCharCode(buf[offset+8],buf[offset+9],buf[offset+10],buf[offset+11]);
+      meta.push({ key: 'File Brand', val: brand.trim(), risk: 'safe' });
+    }
+
+    if (CONTAINERS.includes(type) && size > 16) {
+      const innerStart = (type === 'meta') ? offset+12 : offset+8;
+      parseAtoms(buf, view, innerStart, offset+size, meta, depth+1);
+    }
+    offset += size;
+  }
+}
+
+function readAtomString(buf, start, maxLen) {
+  const end = Math.min(start+maxLen, buf.length);
+  const bytes = buf.slice(start, end);
+  const text = new TextDecoder('utf-8',{fatal:false}).decode(bytes).replace(/[\x00-\x1F]/g,'').trim();
+  return text.slice(0, 120);
+}
+
+/* ── HEIC ── */
+function readHeicMeta(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const buf = new Uint8Array(e.target.result);
+    const view = new DataView(buf.buffer);
+    const meta = [];
+    // HEIC is ISO Base Media — same atom structure as MP4
+    parseAtoms(buf, view, 0, Math.min(buf.length, 2*1024*1024), meta);
+    // Also scan for EXIF block (common in HEIC)
+    const exifOffset = findSequence(buf, [0x45,0x78,0x69,0x66,0x00,0x00]); // "Exif
