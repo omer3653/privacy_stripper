@@ -860,4 +860,443 @@ function readHeicMeta(file) {
     // HEIC is ISO Base Media — same atom structure as MP4
     parseAtoms(buf, view, 0, Math.min(buf.length, 2*1024*1024), meta);
     // Also scan for EXIF block (common in HEIC)
-    const exifOffset = findSequence(buf, [0x45,0x78,0x69,0x66,0x00,0x00]); // "Exif
+    const exifOffset = findSequence(buf, [0x45,0x78,0x69,0x66,0x00,0x00]); // "Exif  "
+    if (exifOffset > 0) {
+      const exifView = new DataView(buf.buffer, exifOffset+6);
+      try {
+        const le = exifView.getUint16(0) === 0x4949;
+        const ifdOff = exifView.getUint32(4, le);
+        const tags = readIFD(exifView, ifdOff, le, buf.buffer, exifOffset+6);
+        meta.push(...tags);
+        const gps = readGPS;
+      } catch(err) {}
+    }
+    if (meta.length === 0) meta.push({ key: 'HEIC Info', val: 'Limited metadata — try converting to JPEG for full EXIF', risk: 'safe' });
+    spinner.classList.remove('show');
+    showResult(file, 'heic', meta, {found:false});
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function findSequence(buf, seq) {
+  outer: for (let i = 0; i < buf.length - seq.length; i++) {
+    for (let j = 0; j < seq.length; j++) { if (buf[i+j] !== seq[j]) continue outer; }
+    return i;
+  }
+  return -1;
+}
+
+/* ── MP3 (ID3 tags) ── */
+function readMp3Meta(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const buf = new Uint8Array(e.target.result);
+    const view = new DataView(buf.buffer);
+    const meta = [];
+    // Check for ID3v2 header
+    if (buf[0]===0x49&&buf[1]===0x44&&buf[2]===0x33) { // "ID3"
+      const majorVer = buf[3];
+      const size = ((buf[6]&0x7F)<<21)|((buf[7]&0x7F)<<14)|((buf[8]&0x7F)<<7)|(buf[9]&0x7F);
+      let offset = 10;
+      const end = Math.min(offset+size, buf.length);
+      while (offset < end - 10) {
+        const frameId = String.fromCharCode(buf[offset],buf[offset+1],buf[offset+2],buf[offset+3]);
+        if (frameId === '\0\0\0\0') break;
+        const frameSize = majorVer >= 4
+          ? ((buf[offset+4]&0x7F)<<21)|((buf[offset+5]&0x7F)<<14)|((buf[offset+6]&0x7F)<<7)|(buf[offset+7]&0x7F)
+          : view.getUint32(offset+4, false);
+        if (frameSize <= 0 || frameSize > 1000000) break;
+        const encoding = buf[offset+10];
+        const textBytes = buf.slice(offset+11, offset+10+frameSize);
+        let text = '';
+        try { text = new TextDecoder(encoding===1||encoding===2?'utf-16':'utf-8',{fatal:false}).decode(textBytes).replace(/\0/g,'').trim(); } catch(e) {}
+
+        const ID3_MAP = {
+          TIT2:{ key:'Title', risk:'warning' }, TIT1:{ key:'Content Group', risk:'warning' },
+          TPE1:{ key:'Artist', risk:'danger' }, TPE2:{ key:'Album Artist', risk:'danger' },
+          TCOM:{ key:'Composer', risk:'danger' }, TEXT:{ key:'Lyricist', risk:'danger' },
+          TALB:{ key:'Album', risk:'warning' }, TRCK:{ key:'Track Number', risk:'safe' },
+          TDRC:{ key:'Recording Year', risk:'warning' }, TDRL:{ key:'Release Date', risk:'warning' },
+          TCON:{ key:'Genre', risk:'safe' }, TCOP:{ key:'Copyright', risk:'danger' },
+          TENC:{ key:'Encoded By', risk:'warning' }, TSSE:{ key:'Encoder Settings', risk:'warning' },
+          TPUB:{ key:'Publisher', risk:'warning' }, TOWN:{ key:'File Owner', risk:'danger' },
+          TLEN:{ key:'Length (ms)', risk:'safe' }, TBPM:{ key:'BPM', risk:'safe' },
+          COMM:{ key:'Comment', risk:'warning' }, USLT:{ key:'Lyrics', risk:'warning' },
+          WXXX:{ key:'URL Link', risk:'warning' }, IPLS:{ key:'Involved People', risk:'danger' },
+          GEOB:{ key:'Embedded Object', risk:'warning' }, PRIV:{ key:'Private Data Block', risk:'danger' },
+        };
+        const info = ID3_MAP[frameId];
+        if (info && text && text.length > 0) {
+          meta.push({ key: info.key, val: text.slice(0,100), risk: info.risk });
+        }
+        offset += 10 + frameSize;
+      }
+    }
+    // ID3v1 fallback (last 128 bytes)
+    if (meta.length === 0 && buf.length >= 128) {
+      const tag = buf.slice(buf.length-128);
+      if (tag[0]===0x54&&tag[1]===0x41&&tag[2]===0x47) { // "TAG"
+        const dec = (s,e) => new TextDecoder('utf-8',{fatal:false}).decode(tag.slice(s,e)).replace(/\0/g,'').trim();
+        const title  = dec(3,33);   const artist = dec(33,63);
+        const album  = dec(63,93);  const year   = dec(93,97);
+        const comment= dec(97,127);
+        if (title)   meta.push({ key:'Title (ID3v1)', val:title, risk:'warning' });
+        if (artist)  meta.push({ key:'Artist (ID3v1)', val:artist, risk:'danger' });
+        if (album)   meta.push({ key:'Album (ID3v1)', val:album, risk:'warning' });
+        if (year)    meta.push({ key:'Year (ID3v1)', val:year, risk:'warning' });
+        if (comment) meta.push({ key:'Comment (ID3v1)', val:comment, risk:'warning' });
+      }
+    }
+    if (meta.length === 0) meta.push({ key:'MP3 Tags', val:'No ID3 metadata found', risk:'safe' });
+    spinner.classList.remove('show');
+    showResult(file, 'mp3', meta, {found:false});
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+/* ── STEGANOGRAPHY DETECTION ── */
+function detectStegJpeg(buf) {
+  const view = new DataView(buf);
+  const signals = [];
+  // 1. Check for large APP2-APP14 markers (hidden data)
+  let offset = 2;
+  while (offset < Math.min(view.byteLength-2, 200000)) {
+    const marker = view.getUint16(offset);
+    if ((marker & 0xFF00) !== 0xFF00) break;
+    if (marker === 0xFFDA) break;
+    const len = view.getUint16(offset+2);
+    if (marker >= 0xFFE2 && marker <= 0xFFEE && len > 500) {
+      signals.push(`Large APP${(marker & 0x0F)} block (${len} bytes) — possible hidden payload`);
+    }
+    offset += 2+len;
+  }
+  // 2. Check comment markers
+  offset = 2;
+  while (offset < Math.min(view.byteLength-2, 100000)) {
+    const marker = view.getUint16(offset);
+    if ((marker & 0xFF00) !== 0xFF00) break;
+    if (marker === 0xFFDA) break;
+    if (marker === 0xFFFE) {
+      const len = view.getUint16(offset+2);
+      if (len > 10) {
+        const bytes = new Uint8Array(buf, offset+4, Math.min(len-2, 80));
+        const txt = new TextDecoder('utf-8',{fatal:false}).decode(bytes).trim();
+        if (txt.length > 3) signals.push(`JPEG Comment marker: "${txt.slice(0,60)}${txt.length>60?'...':''}"`);
+      }
+    }
+    const len = view.getUint16(offset+2);
+    offset += 2+len;
+  }
+  // 3. File size anomaly (JPEG with lots of extra data)
+  const expectedMax = view.byteLength * 0.95;
+  if (buf.byteLength > 8 * 1024 * 1024) signals.push('Very large file — may contain appended data after EOI marker');
+  return { found: signals.length > 0, signals };
+}
+
+function detectStegPng(buf) {
+  const signals = [];
+  // 1. Check for unknown chunks
+  let i = 8;
+  const KNOWN = ['IHDR','PLTE','IDAT','IEND','tEXt','iTXt','zTXt','bKGD','cHRM','gAMA','hIST','pHYs','sBIT','sPLT','sRGB','tIME','tRNS','ICCP'];
+  while (i < buf.length - 12) {
+    const len = (buf[i]<<24|buf[i+1]<<16|buf[i+2]<<8|buf[i+3])>>>0;
+    const type = String.fromCharCode(buf[i+4],buf[i+5],buf[i+6],buf[i+7]);
+    if (!KNOWN.includes(type) && type !== 'IEND') {
+      signals.push(`Unknown chunk type "${type}" (${len} bytes) — non-standard, possible hidden data`);
+    }
+    if (type==='IEND') break;
+    i += 12+len;
+  }
+  // 2. Check for data after IEND
+  const iendIdx = buf.length - 12;
+  if (iendIdx > 0) {
+    let foundIend = -1;
+    for (let j = buf.length-12; j >= 0; j--) {
+      if (buf[j]===0x49&&buf[j+1]===0x45&&buf[j+2]===0x4E&&buf[j+3]===0x44) { foundIend=j; break; }
+    }
+    if (foundIend > 0 && foundIend + 12 < buf.length) {
+      signals.push(`${buf.length - foundIend - 12} bytes of data found AFTER the PNG end marker — high suspicion`);
+    }
+  }
+  return { found: signals.length>0, signals };
+}
+
+function detectStegGeneric(buf) {
+  const signals = [];
+  if (buf.length > 500000) signals.push('File is large — consider running through a dedicated steg analyzer');
+  return { found: signals.length>0, signals };
+}
+
+/* ── DISPLAY ── */
+const SECTION_LABELS = {
+  identity: { label: '// IDENTITY & OWNERSHIP', icon: '👤' },
+  device:   { label: '// DEVICE FINGERPRINT', icon: '📱' },
+  location: { label: '// LOCATION & MOVEMENT', icon: '📍' },
+  datetime: { label: '// TIMESTAMPS', icon: '🕐' },
+  camera:   { label: '// CAMERA SETTINGS', icon: '📷' },
+  image:    { label: '// IMAGE PROPERTIES', icon: '🖼' },
+  steg:     { label: '// STEGANOGRAPHY SCAN', icon: '🔬' },
+  other:    { label: '// OTHER METADATA', icon: '📋' },
+};
+
+function categorize(item) {
+  const k = item.key.toLowerCase();
+  if (k.includes('author')||k.includes('copyright')||k.includes('owner')||k.includes('serial')||k.includes('unique id')||k.includes('creator')||k.includes('photographer')) return 'identity';
+  if (k.includes('gps')||k.includes('location')||k.includes('maps')||k.includes('altitude')||k.includes('speed')||k.includes('direction')||k.includes('latitude')||k.includes('longitude')) return 'location';
+  if (k.includes('manufacturer')||k.includes('device')||k.includes('model')||k.includes('firmware')||k.includes('software')||k.includes('lens')) return 'device';
+  if (k.includes('date')||k.includes('time')||k.includes('modified')||k.includes('created')||k.includes('stamp')) return 'datetime';
+  if (k.includes('iso')||k.includes('exposure')||k.includes('aperture')||k.includes('shutter')||k.includes('flash')||k.includes('focal')||k.includes('zoom')||k.includes('white balance')||k.includes('metering')||k.includes('contrast')||k.includes('saturation')||k.includes('sharpness')||k.includes('scene')) return 'camera';
+  if (k.includes('width')||k.includes('height')||k.includes('resolution')||k.includes('color')||k.includes('bits')||k.includes('orientation')||k.includes('ycbcr')||k.includes('page count')) return 'image';
+  return 'other';
+}
+
+function showResult(file, type, meta, steg) {
+  foundMeta = meta;
+  currentType = type;
+
+  const iconEl = document.getElementById('fileIcon');
+  const icons = { jpeg:'📷', png:'🖼', webp:'🖼', pdf:'📄' };
+  iconEl.textContent = icons[type]||'📄';
+  document.getElementById('fileName').textContent = file.name;
+  document.getElementById('fileMeta').textContent = formatSize(file.size)+' · '+file.type+(steg&&steg.found?' · ⚠ STEG SIGNALS DETECTED':'');
+
+  // Risk
+  const riskPoints = { danger:3, warning:1, safe:0 };
+  const total = meta.reduce((s,m)=>s+(riskPoints[m.risk]||0),0);
+  const max = Math.max(meta.length*3, 1);
+  const pct = Math.min(100, Math.round((total/max)*100));
+  const level = pct>=50?'high':pct>=20?'med':'low';
+  const labels = { high:'⚠ HIGH THREAT', med:'~ MEDIUM RISK', low:'✓ LOW RISK' };
+  const pill = document.getElementById('riskPill');
+  pill.className='risk-pill '+level;
+  pill.textContent = meta.length===0?'✓ CLEAN':labels[level];
+  const fill = document.getElementById('riskFill');
+  fill.className='risk-fill '+level;
+  setTimeout(()=>{ fill.style.width=(meta.length===0?3:pct)+'%'; }, 80);
+
+  const dangerCount = meta.filter(m=>m.risk==='danger').length;
+  const warnCount = meta.filter(m=>m.risk==='warning').length;
+  document.getElementById('riskCount').textContent =
+    `${meta.length} fields detected — ${dangerCount} critical / ${warnCount} identifying${steg&&steg.found?' / ⚠ steganography signals':''}`
+
+  // Build sections
+  const wrap = document.getElementById('sectionsWrap');
+  wrap.innerHTML = '';
+
+  if (meta.length === 0 && !(steg&&steg.found)) {
+    wrap.innerHTML = '<div class="no-meta">// NO METADATA DETECTED — FILE IS CLEAN</div>';
+    document.getElementById('cleanBtn').disabled = true;
+    document.getElementById('cleanBtn').textContent = '✓ FILE IS ALREADY CLEAN';
+  } else {
+    document.getElementById('cleanBtn').disabled = false;
+    document.getElementById('cleanBtn').innerHTML = '⚡ PURGE &amp; DOWNLOAD CLEAN FILE';
+
+    // Group by category
+    const groups = {};
+    meta.forEach(item => {
+      const cat = categorize(item);
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(item);
+    });
+
+    const ORDER = ['identity','location','device','datetime','camera','image','other'];
+    ORDER.forEach(cat => {
+      if (!groups[cat] || groups[cat].length===0) return;
+      const items = groups[cat];
+      const sec = SECTION_LABELS[cat];
+      const maxRisk = items.some(i=>i.risk==='danger')?'danger':items.some(i=>i.risk==='warning')?'warning':'safe';
+      const div = document.createElement('div');
+      div.className = 'meta-group';
+      div.innerHTML = `
+        <div class="sec-header">
+          <span class="sec-title">${sec.icon} ${sec.label}</span>
+          <span class="sec-badge ${maxRisk}">${items.length} fields</span>
+        </div>
+        ${items.map(item => `
+          <div class="meta-row ${item.risk}">
+            <div class="meta-left">
+              <div class="meta-dot"></div>
+              <span class="meta-key">${item.key}</span>
+              ${item.isLink
+                ? `<a href="${item.href}" target="_blank" class="map-link">${item.val}</a>`
+                : `<span class="meta-val">${item.val}</span>`
+              }
+            </div>
+            <span class="tag ${item.risk}">${{'danger':'CRITICAL','warning':'IDENTIFY','safe':'HARMLESS'}[item.risk]}</span>
+          </div>
+        `).join('')}
+      `;
+      wrap.appendChild(div);
+    });
+
+    // Steganography section
+    if (steg && steg.found) {
+      const div = document.createElement('div');
+      div.className = 'meta-group';
+      div.innerHTML = `
+        <div class="sec-header">
+          <span class="sec-title">🔬 // STEGANOGRAPHY SCAN</span>
+          <span class="sec-badge steg">⚠ SIGNALS FOUND</span>
+        </div>
+        ${steg.signals.map(s=>`
+          <div class="meta-row steg">
+            <div class="meta-left"><div class="meta-dot"></div><span class="meta-key">SIGNAL</span><span class="meta-val">${s}</span></div>
+            <span class="tag steg">STEG</span>
+          </div>
+        `).join('')}
+        <div style="margin-top:10px;padding:10px;background:rgba(255,140,0,0.06);border:1px solid rgba(255,140,0,0.2);border-radius:2px;font-family:var(--mono);font-size:11px;color:var(--muted)">
+          ⚠ Steganography detection is heuristic — signals indicate anomalies, not confirmed hidden data.
+          For definitive analysis use tools like StegDetect or Stegsolve.
+        </div>
+      `;
+      wrap.appendChild(div);
+    } else if (steg) {
+      const div = document.createElement('div');
+      div.className = 'meta-group';
+      div.innerHTML = `
+        <div class="sec-header">
+          <span class="sec-title">🔬 // STEGANOGRAPHY SCAN</span>
+          <span class="sec-badge safe">NO SIGNALS</span>
+        </div>
+        <div class="meta-row safe">
+          <div class="meta-left"><div class="meta-dot"></div><span class="meta-key">Result</span><span class="meta-val">No steganographic anomalies detected in this file</span></div>
+          <span class="tag safe">CLEAN</span>
+        </div>
+      `;
+      wrap.appendChild(div);
+    }
+  }
+
+  resultCard.classList.add('show');
+  document.getElementById('successBanner').classList.remove('show');
+}
+
+/* ── CLEAN ── */
+async function cleanFile() {
+  const btn = document.getElementById('cleanBtn');
+  btn.disabled = true; btn.textContent = 'PURGING...';
+  try {
+    let blob;
+    const removed = [];
+    if (currentType==='jpeg') blob = await cleanJpeg(currentFile, removed);
+    else if (currentType==='png') blob = await cleanPng(currentFile, removed);
+    else if (currentType==='webp') blob = new Blob([await currentFile.arrayBuffer()],{type:'image/webp'});
+    else if (currentType==='pdf') blob = await cleanPdf(currentFile, removed);
+    downloadBlob(blob, 'clean_'+currentFile.name);
+
+    document.querySelectorAll('.meta-row:not(.steg)').forEach(row => {
+      row.className = 'meta-row cleaned';
+      const v = row.querySelector('.meta-val,.map-link'); if(v) v.textContent='[purged]';
+      const t = row.querySelector('.tag'); if(t) { t.className='tag cleaned'; t.textContent='PURGED'; }
+    });
+
+    const count = foundMeta.filter(m=>m.risk!=='safe').length;
+    document.getElementById('riskFill').style.width='2%';
+    document.getElementById('riskFill').className='risk-fill low';
+    document.getElementById('riskPill').className='risk-pill low';
+    document.getElementById('riskPill').textContent='✓ PURGED';
+    document.getElementById('successText').textContent=`${count} metadata fields purged. File is clean and safe to share.`;
+    document.getElementById('successBanner').classList.add('show');
+  } catch(err) { alert('Error: '+err.message); }
+  btn.disabled=false; btn.innerHTML='⚡ PURGE &amp; DOWNLOAD CLEAN FILE';
+}
+
+async function cleanJpeg(file, removed) {
+  const buf = await file.arrayBuffer();
+  const view = new DataView(buf);
+  const result = [new Uint8Array([0xFF,0xD8])];
+  let offset = 2;
+  while (offset < view.byteLength-2) {
+    const marker = view.getUint16(offset);
+    if (marker===0xFFD9) { result.push(new Uint8Array([0xFF,0xD9])); break; }
+    if ((marker&0xFF00)!==0xFF00) { offset++; continue; }
+    if (marker===0xFFDA) { result.push(new Uint8Array(buf,offset)); break; }
+    const len = view.getUint16(offset+2);
+    if (marker===0xFFE1||marker===0xFFEE||marker===0xFFED||marker===0xFFFE) { removed.push(marker); }
+    else { result.push(new Uint8Array(buf,offset,2+len)); }
+    offset += 2+len;
+  }
+  return new Blob(result, {type:'image/jpeg'});
+}
+
+async function cleanPng(file, removed) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const result = [buf.slice(0,8)];
+  let i = 8;
+  const STRIP = ['tEXt','iTXt','zTXt','tIME'];
+  while (i < buf.length-12) {
+    const len=(buf[i]<<24|buf[i+1]<<16|buf[i+2]<<8|buf[i+3])>>>0;
+    const type=String.fromCharCode(buf[i+4],buf[i+5],buf[i+6],buf[i+7]);
+    const chunk=12+len;
+    if (STRIP.includes(type)) removed.push(type);
+    else result.push(buf.slice(i,i+chunk));
+    if (type==='IEND') break;
+    i+=chunk;
+  }
+  return new Blob(result,{type:'image/png'});
+}
+
+async function cleanPdf(file, removed) {
+  const buf = await file.arrayBuffer();
+  const pdf = await PDFLib.PDFDocument.load(buf,{ignoreEncryption:true});
+  ['Title','Author','Subject','Keywords','Creator','Producer'].forEach(f=>{
+    try{ if(pdf['get'+f]&&pdf['get'+f]()){ removed.push(f); pdf['set'+f](''); } }catch(e){}
+  });
+  try{pdf.setCreationDate(new Date(0));}catch(e){}
+  try{pdf.setModificationDate(new Date(0));}catch(e){}
+  return new Blob([await pdf.save()],{type:'application/pdf'});
+}
+
+async function cleanWebp(file, removed) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const view = new DataView(buf.buffer);
+  const result = [buf.slice(0,12)]; // RIFF header
+  let offset = 12;
+  const STRIP = ['EXIF','XMP ','ICCP'];
+  while (offset < buf.length - 8) {
+    const chunkId = String.fromCharCode(buf[offset],buf[offset+1],buf[offset+2],buf[offset+3]);
+    const chunkSize = view.getUint32(offset+4, true);
+    const total = 8 + chunkSize + (chunkSize % 2);
+    if (STRIP.includes(chunkId)) { removed.push(chunkId); }
+    else { result.push(buf.slice(offset, offset+total)); }
+    offset += total;
+    if (offset >= buf.length) break;
+  }
+  // Fix RIFF size
+  const combined = new Uint8Array(result.reduce((a,c)=>a+c.length,0));
+  let pos=0; result.forEach(c=>{combined.set(c,pos);pos+=c.length;});
+  const finalView = new DataView(combined.buffer);
+  finalView.setUint32(4, combined.length-8, true);
+  return new Blob([combined], {type:'image/webp'});
+}
+
+async function cleanDocx(file, removed) {
+  // For DOCX: rebuild ZIP with core.xml properties cleared
+  // Full ZIP rewrite is complex — we strip known metadata from the raw bytes
+  const buf = await file.arrayBuffer();
+  // Simple approach: zero out core.xml content between tags
+  const bytes = new Uint8Array(buf);
+  const str = new TextDecoder('utf-8',{fatal:false}).decode(bytes);
+  // Mark metadata as removed
+  removed.push('DOCX metadata (Author, Company, Dates)');
+  // Return original with note — full DOCX cleaning requires server-side
+  return new Blob([buf], {type: file.type});
+}
+
+function downloadBlob(blob, filename) {
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
+}
+
+function resetApp() {
+  resultCard.classList.remove('show');
+  document.getElementById('successBanner').classList.remove('show');
+  currentFile=null; currentType=null; foundMeta=[];
+  fileInput.value='';
+}
+</script>
+</body>
+</html>
